@@ -226,12 +226,12 @@ p { margin: 0; }
       </header>
       <ol class="how" aria-label="How each section works">
         <li><b>Learn</b>See each country on the map</li>
-        <li><b>Pick 1 of 5</b>Tap the right name</li>
-        <li><b>Pick 1 of 3</b>Fewer options</li>
+        <li><b>Pick 1 of 3</b>Tap the right name</li>
+        <li><b>Pick 1 of 5</b>More options</li>
         <li><b>Type it</b>Hints if you need them</li>
       </ol>
       <div class="conts" id="cont-list"></div>
-      <p class="muted" style="font-size:13px">Once two neighbouring sections are done, a mixed round of both unlocks. Your progress is saved on this device.</p>
+      <p class="muted" style="font-size:13px">Once two neighbouring sections are done, a mixed round of both unlocks: pick 1 of 3, then type them all. Your progress is saved on this device.</p>
     </div>
   </section>
 
@@ -587,7 +587,7 @@ function renderContinent(cont) {
     let list;
     if (st.kind === "section") list = st.ids.map((k) => C.get(k).name).join(" · ");
     else if (!avail) list = st.kind === "final" ? "Finish every section to unlock this." : "Finish both sections to unlock this mix.";
-    else list = `${st.ids.length} countries, typed from memory. Any slip comes back until you get it clean.`;
+    else list = `${st.ids.length} countries. Pick 1 of 3, then type them from memory. Any slip comes back until you get it clean.`;
     return `<li><button class="step ${st.kind !== "section" ? "mix" : ""} ${avail ? "" : "locked"} ${isNext ? "next" : ""}" data-s="${st.id}" ${avail ? "" : 'aria-disabled="true"'}>
       <span class="sname">${esc(st.name)}</span>${chip}<span class="slist">${esc(list)}</span></button></li>`;
   }).join("");
@@ -619,12 +619,12 @@ function renderContinent(cont) {
 
 /* ---------- Play ---------- */
 let play = null;
-const LADDER = { section: ["Learn", "Pick 1 of 5", "Pick 1 of 3", "Type"], mix: ["Type"], final: ["Type"] };
+const LADDER = { section: ["Learn", "Pick 1 of 3", "Pick 1 of 5", "Type"], mix: ["Pick 1 of 3", "Type"], final: ["Pick 1 of 3", "Type"] };
 
 function startStep(cont, step) {
   const phases = step.kind === "section"
-    ? [{ t: "teach" }, { t: "choice", n: 5 }, { t: "choice", n: 3 }, { t: "type", mode: "pass" }]
-    : [{ t: "type", mode: "requeue" }];
+    ? [{ t: "teach" }, { t: "choice", n: 3 }, { t: "choice", n: 5 }, { t: "type", mode: "pass" }]
+    : [{ t: "choice", n: 3 }, { t: "type", mode: "requeue" }];
   play = { cont, step, phases, pi: 0, ids: step.ids.slice(), passes: 0 };
   show("play");
   $("#play-title").textContent = step.kind === "section" ? step.name : step.name.replace(/^Mix: /, "Mix · ");
@@ -678,7 +678,8 @@ function renderIntro(ph) {
   if (ph.t === "choice") { title = `Pick 1 of ${ph.n}`; text = `A country lights up on the map. Tap its name from ${ph.n} options. Misses come back at the end of the round.`; }
   else if (play.step.kind === "section") { title = "Type it"; text = `Type each highlighted country. Use a hint if you're stuck. To finish, get all ${n} in one run with no hints and no misses.`; }
   else { title = play.step.kind === "final" ? "Whole continent" : "Mixed round"; text = `All ${n} countries, shuffled. Type each one. Anything you miss or need a hint for comes back until you get it clean.`; }
-  card(`<p class="counter">Round ${play.pi + (play.step.kind === "section" ? 0 : 1)} of ${play.step.kind === "section" ? 3 : 1}</p>
+  const rounds = play.phases.filter((p) => p.t !== "teach");
+  card(`<p class="counter">Round ${rounds.indexOf(ph) + 1} of ${rounds.length}</p>
     <div class="result-title">${title}</div><p class="muted">${text}</p>
     <button class="btn primary" id="go">Start</button>`);
   $("#go").onclick = startRound;
