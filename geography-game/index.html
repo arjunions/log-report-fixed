@@ -137,9 +137,14 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .topbar .titles { flex: 1; min-width: 0; }
 .topbar .sec { font: 700 20px/1.05 var(--display); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ladder { display: flex; gap: 4px; margin-top: 4px; }
-.ladder span { font: 600 11px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; padding: 4px 6px; border-radius: 5px; color: var(--muted); border: 1px solid var(--rule); }
-.ladder span.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.ladder span.past { color: var(--good); border-color: transparent; background: var(--good-bg); }
+.ladder { flex-wrap: wrap; }
+.ladder > * { font: 600 11px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; padding: 4px 6px; border-radius: 5px; color: var(--muted); border: 1px solid var(--rule); background: transparent; }
+.ladder > button { min-height: 26px; border-color: var(--border); color: var(--ink); }
+.ladder > .on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.ladder > .past { color: var(--good); border-color: transparent; background: var(--good-bg); }
+.rounds { display: flex; flex-direction: column; gap: 8px; }
+.rounds .opt { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.rounds .opt small { font-weight: 400; color: var(--muted); font-size: 13px; }
 .play-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
 @media (min-width: 860px) { .play-body { flex-direction: row; } .card { width: 380px; flex: none; overflow-y: auto; } }
 .map { flex: 1; min-height: 170px; position: relative; border-radius: 14px; overflow: hidden; background: var(--sea); border: 1px solid var(--rule); touch-action: none; }
@@ -588,6 +593,7 @@ function renderContinent(cont) {
     if (st.kind === "section") list = st.ids.map((k) => C.get(k).name).join(" · ");
     else if (!avail) list = st.kind === "final" ? "Finish every section to unlock this." : "Finish both sections to unlock this mix.";
     else list = `${st.ids.length} countries. Pick 1 of 3, then type them from memory. Any slip comes back until you get it clean.`;
+    if (done) list += (st.kind === "section" ? ". " : " ") + "Tap to replay any round.";
     return `<li><button class="step ${st.kind !== "section" ? "mix" : ""} ${avail ? "" : "locked"} ${isNext ? "next" : ""}" data-s="${st.id}" ${avail ? "" : 'aria-disabled="true"'}>
       <span class="sname">${esc(st.name)}</span>${chip}<span class="slist">${esc(list)}</span></button></li>`;
   }).join("");
@@ -619,23 +625,60 @@ function renderContinent(cont) {
 
 /* ---------- Play ---------- */
 let play = null;
-const LADDER = { section: ["Learn", "Pick 1 of 3", "Pick 1 of 5", "Type"], mix: ["Pick 1 of 3", "Type"], final: ["Pick 1 of 3", "Type"] };
+const LADDER = { section: ["Learn", "Pick 3", "Pick 5", "Type"], mix: ["Pick 3", "Type"], final: ["Pick 3", "Type"] };
+
+const freshPhases = (step) => step.kind === "section"
+  ? [{ t: "teach" }, { t: "choice", n: 3 }, { t: "choice", n: 5 }, { t: "type", mode: "pass" }]
+  : [{ t: "choice", n: 3 }, { t: "type", mode: "requeue" }];
+const ROUND_INFO = { Learn: ["Learn", "See each country"], "Pick 3": ["Pick 1 of 3", "Tap the right name"], "Pick 5": ["Pick 1 of 5", "More options"], Type: ["Type", "From memory, with hints"] };
 
 function startStep(cont, step) {
-  const phases = step.kind === "section"
-    ? [{ t: "teach" }, { t: "choice", n: 3 }, { t: "choice", n: 5 }, { t: "type", mode: "pass" }]
-    : [{ t: "choice", n: 3 }, { t: "type", mode: "requeue" }];
-  play = { cont, step, phases, pi: 0, ids: step.ids.slice(), passes: 0 };
+  play = { cont, step, phases: freshPhases(step), pi: 0, ids: step.ids.slice(), passes: 0, gen: 0 };
   show("play");
   $("#play-title").textContent = step.kind === "section" ? step.name : step.name.replace(/^Mix: /, "Mix · ");
   setView(step.ids, cont.key);
+  if (isDone(cont.key, step.id)) renderChooser(); else enterPhase();
+}
+/* Finished sections and mixes can start at any round. */
+const canJump = () => play && isDone(play.cont.key, play.step.id);
+function jumpTo(i) {
+  play.gen++;
+  play.phases = freshPhases(play.step);
+  play.pi = i; play.passes = 0; play.clean = null; play.queue = [];
+  play.choosing = false;
+  view.flashed = new Set();
   enterPhase();
+}
+function renderChooser() {
+  play.gen++;
+  play.choosing = true;
+  view.tappable = false;
+  view.flashed = new Set();
+  highlight(null);
+  renderLadder();
+  const labels = LADDER[play.step.kind];
+  card(`<p class="counter">You've finished this one</p>
+    <div class="result-title">Pick a round</div>
+    <p class="muted">Start wherever you like. On finished sets you can also tap the round names at the top to switch at any time.</p>
+    <div class="rounds">${labels.map((l, i) => `<button class="opt" data-i="${i}"><span>${ROUND_INFO[l][0]}</span><small>${ROUND_INFO[l][1]}</small></button>`).join("")}</div>`);
+  $("#card").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => jumpTo(+b.dataset.i));
 }
 function renderLadder() {
   const labels = LADDER[play.step.kind];
-  $("#ladder").innerHTML = labels.map((l, i) => `<span class="${i === play.pi ? "on" : i < play.pi ? "past" : ""}">${l}</span>`).join("");
+  const cur = play.choosing ? -1 : play.pi;
+  const free = canJump();
+  $("#ladder").innerHTML = labels.map((l, i) => {
+    const cls = i === cur ? "on" : i < cur ? "past" : "";
+    return free
+      ? `<button type="button" class="${cls}" data-round="${i}" aria-label="Go to round: ${ROUND_INFO[l][0]}">${l}</button>`
+      : `<span class="${cls}">${l}</span>`;
+  }).join("");
+  if (free) $("#ladder").querySelectorAll("[data-round]").forEach((b) => b.onclick = () => jumpTo(+b.dataset.round));
 }
+/* Run a delayed step only if the player hasn't left or switched rounds meanwhile. */
+function later(fn, ms) { const g = play.gen; setTimeout(() => { if (play && play.gen === g) fn(); }, ms); }
 function enterPhase() {
+  play.choosing = false;
   renderLadder();
   const ph = play.phases[play.pi];
   view.tappable = ph.t === "teach";
@@ -735,7 +778,7 @@ function onChoice(btn) {
     play.answered.add(play.cur);
     if (!play.missed.has(play.cur)) play.firstTry.add(play.cur);
     $("#fb").className = "feedback good"; $("#fb").textContent = `Yes, that's ${c.name}.`;
-    setTimeout(nextItem, 750);
+    later(nextItem, 750);
   } else {
     btn.classList.add("bad");
     play.missed.add(play.cur);
@@ -838,7 +881,7 @@ function submitTyped() {
   else if (clean) play.clean.add(play.cur);
   else play.queue.push(play.cur);
   $("#hint").disabled = true; $("#reveal").disabled = true;
-  setTimeout(nextItem, r.exact && clean ? 800 : 1700);
+  later(nextItem, r.exact && clean ? 800 : 1700);
 }
 
 function roundEnd() {
@@ -889,11 +932,12 @@ function enterReview() {
 function stepComplete() {
   const { cont, step } = play;
   markDone(cont.key, step.id);
+  renderLadder();
   const nx = nextStep(cont);
   // Sweep the learned countries across the map, one by one.
   view.flashed = new Set();
   const order = step.ids.slice().sort((a, b) => C.get(a).focus[0] - C.get(b).focus[0]);
-  order.forEach((k, i) => setTimeout(() => { if (view) { view.flashed.add(k); styleMap(); } }, reduced ? 0 : 90 * i));
+  order.forEach((k, i) => later(() => { if (view) { view.flashed.add(k); styleMap(); } }, reduced ? 0 : 90 * i));
   const title = step.kind === "section" ? `${step.name} learned` : step.kind === "final" ? `${cont.name} mastered` : "Mix mastered";
   const detail = step.kind === "section"
     ? `You typed all ${step.ids.length} from memory${play.passes > 1 ? ` on run ${play.passes}` : " on your first run"}.`
