@@ -29,6 +29,8 @@
   --bad-bg: #F8E2DC;
   --grat: rgba(24, 38, 46, .08);
   --shadow: rgba(24, 38, 46, .14);
+  --globe-hi: rgba(255, 255, 255, .3);
+  --globe-shade: rgba(24, 38, 46, .28);
   --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
   --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -38,6 +40,7 @@
     --sea: #0B1E28; --land: #1C292F; --cont: #26353B; --sect: #355040; --border: #4D6570;
     --target: #F4A51C; --target-ink: #F7C25E; --good: #5BC489; --good-bg: #15342A;
     --bad: #F27B66; --bad-bg: #3B1E19; --grat: rgba(228, 236, 238, .06); --shadow: rgba(0, 0, 0, .45);
+    --globe-hi: rgba(255, 255, 255, .10); --globe-shade: rgba(0, 0, 0, .55);
     color-scheme: dark;
   }
 }
@@ -46,6 +49,7 @@
   --sea: #0B1E28; --land: #1C292F; --cont: #26353B; --sect: #355040; --border: #4D6570;
   --target: #F4A51C; --target-ink: #F7C25E; --good: #5BC489; --good-bg: #15342A;
   --bad: #F27B66; --bad-bg: #3B1E19; --grat: rgba(228, 236, 238, .06); --shadow: rgba(0, 0, 0, .45);
+    --globe-hi: rgba(255, 255, 255, .10); --globe-shade: rgba(0, 0, 0, .55);
   color-scheme: dark;
 }
 
@@ -97,6 +101,15 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 }
 
 /* home */
+.globe-wrap { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#globe { display: block; width: min(100%, 340px); max-width: 100%; aspect-ratio: 1; touch-action: pan-y; cursor: grab; }
+#globe:active { cursor: grabbing; }
+.globe-wrap figcaption { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.globe-count { font: 700 22px/1 var(--display); text-transform: uppercase; letter-spacing: .04em; }
+.legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 11px; height: 11px; border-radius: 3px; background: var(--cont); border: 1px solid var(--border); }
+.sw.learned { background: var(--sect); }
 .how { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
 .how li { border-top: 3px solid var(--rule); padding-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.3; }
 .how li b { display: block; font: 700 17px/1.1 var(--display); text-transform: uppercase; letter-spacing: .04em; color: var(--ink); }
@@ -242,6 +255,13 @@ p { margin: 0; }
         <h1 class="brand">Atlas <span>Drill</span></h1>
         <p class="lede">Pick a continent. Each section teaches you about eight countries, then quizzes you until you can type every one from memory.</p>
       </header>
+      <figure class="globe-wrap">
+        <canvas id="globe" role="img" aria-label="Globe with the countries you have learned filled in green. Hold and drag to turn it, tap a continent to open it."></canvas>
+        <figcaption>
+          <span class="globe-count num" id="globe-count"></span>
+          <span class="legend"><span><i class="sw learned"></i>Learned</span><span><i class="sw"></i>Not yet</span><span>Hold and drag to turn · tap to open</span></span>
+        </figcaption>
+      </figure>
       <ol class="how" aria-label="How each section works">
         <li><b>Learn</b>See each country on the map</li>
         <li><b>Pick 1 of 3</b>Tap the right name</li>
@@ -570,10 +590,133 @@ if (window.visualViewport) {
   vv.addEventListener("resize", fit);
 }
 
+/* ---------- Home globe ----------
+   A lighter copy of the map on the home page. It stays still and turns only while you drag it.
+   Countries from finished sections are filled in. */
+const globe = (() => {
+  const canvas = $("#globe");
+  const ctx = canvas.getContext("2d");
+  /* Keep a point only when it is at least TOL degrees from the last kept one. */
+  const TOL = 0.45;
+  const thinRing = (ring) => {
+    const out = [ring[0]];
+    let [px, py] = ring[0];
+    for (let i = 1; i < ring.length - 1; i++) {
+      const [x, y] = ring[i];
+      let dx = Math.abs(x - px); if (dx > 180) dx = 360 - dx;
+      if (dx + Math.abs(y - py) >= TOL) { out.push(ring[i]); px = x; py = y; }
+    }
+    out.push(ring[ring.length - 1]);
+    return out;
+  };
+  const thin = (f) => {
+    const g = f.geometry, polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates, kept = [];
+    for (const poly of polys) {
+      const rings = poly.map(thinRing);
+      if (rings[0].length < 4) continue;
+      const p = { type: "Polygon", coordinates: [rings[0], ...rings.slice(1).filter((r) => r.length >= 4)] };
+      // A ring that flipped direction would cover the whole globe, so fall back to the original shape.
+      kept.push(d3.geoArea(p) < 2 * Math.PI ? p.coordinates : poly);
+    }
+    return { type: "Feature", geometry: { type: "MultiPolygon", coordinates: kept } };
+  };
+  const feats = FEATURES.map((f) => ({ f: thin(f), c: featCountry.get(f) || null })).filter((g) => g.f.geometry.coordinates.length);
+  for (const c of C.values()) c.tiny = c.feats.reduce((t, f) => t + d3.geoArea(f), 0) < 5e-5;
+  const grat = d3.geoGraticule10(), sphere = { type: "Sphere" };
+  const proj = d3.geoOrthographic().clipAngle(90).precision(0.6);
+  let rot = [-15, -12], learned = new Set(), col = {}, drag = null, queued = false;
+
+  const readColors = () => {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ["sea", "land", "cont", "sect", "border", "grat", "ink", "globe-hi", "globe-shade"]) col[k] = cs.getPropertyValue("--" + k).trim();
+  };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); draw(); });
+  new MutationObserver(() => { readColors(); draw(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  function size() {
+    const w = canvas.clientWidth, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(w * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    proj.scale(w / 2 - 2).translate([w / 2, w / 2]).rotate(rot);
+    return w;
+  }
+  function draw() {
+    if (!canvas.clientWidth) return;
+    const w = size(), r = w / 2 - 2, path = d3.geoPath(proj, ctx);
+    ctx.clearRect(0, 0, w, w);
+    ctx.beginPath(); path(sphere); ctx.fillStyle = col.sea; ctx.fill();
+    ctx.beginPath(); path(grat); ctx.strokeStyle = col.grat; ctx.lineWidth = 0.8; ctx.stroke();
+    const fill = (pred, color) => { ctx.beginPath(); for (const g of feats) if (pred(g)) path(g.f); ctx.fillStyle = color; ctx.fill(); };
+    fill((g) => !g.c, col.land);
+    fill((g) => g.c && !learned.has(g.c.key), col.cont);
+    fill((g) => g.c && learned.has(g.c.key), col.sect);
+    ctx.beginPath(); for (const g of feats) path(g.f); ctx.strokeStyle = col.border; ctx.lineWidth = 0.5; ctx.stroke();
+    // Tiny learned countries get a dot so they still show.
+    const center = [-rot[0], -rot[1]];
+    for (const k of learned) {
+      const c = C.get(k);
+      if (!c.tiny || d3.geoDistance(c.focus, center) > Math.PI / 2 - 0.05) continue;
+      const [x, y] = proj(c.focus);
+      ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2); ctx.fillStyle = col.sect; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = col.border; ctx.stroke();
+    }
+    // Light from the upper left, darker toward the rim, so it reads as a ball.
+    const g = ctx.createRadialGradient(w * 0.36, w * 0.3, r * 0.05, w / 2, w / 2, r);
+    g.addColorStop(0, col["globe-hi"]); g.addColorStop(0.55, "rgba(0,0,0,0)"); g.addColorStop(1, col["globe-shade"]);
+    ctx.beginPath(); path(sphere); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = col.border; ctx.stroke();
+  }
+  /* Redraw at most once per frame while dragging. */
+  const redraw = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; draw(); }); };
+  function start() {
+    readColors();
+    learned = new Set();
+    for (const cont of CONTS) cont.sections.forEach((sec, i) => { if (sectionDone(cont, i)) sec.ids.forEach((k) => learned.add(k)); });
+    const n = learned.size;
+    $("#globe-count").textContent = n ? `${n} of ${C.size} countries learned` : `0 of ${C.size} countries learned`;
+    draw();
+  }
+  /* Turn to face a continent, e.g. the one you just left. */
+  function face(cont) {
+    const c = d3.geoCentroid({ type: "MultiPoint", coordinates: cont.all.map((k) => C.get(k).focus) });
+    rot = [-c[0], Math.max(-35, Math.min(35, -c[1]))];
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX, y: e.clientY, r: rot.slice(), moved: 0, mouse: e.pointerType === "mouse" };
+    canvas.setPointerCapture?.(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const k = 180 / canvas.clientWidth, dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.moved = Math.max(drag.moved, Math.hypot(dx, dy));
+    rot = [drag.r[0] + dx * k, drag.mouse ? Math.max(-60, Math.min(60, drag.r[1] - dy * k)) : drag.r[1]];
+    redraw();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const tap = drag.moved < 6;
+    drag = null;
+    if (!tap || e.type === "pointercancel") return;
+    const rect = canvas.getBoundingClientRect();
+    const ll = proj.invert([e.clientX - rect.left, e.clientY - rect.top]);
+    if (!ll || d3.geoDistance(ll, [-rot[0], -rot[1]]) > Math.PI / 2) return;
+    // Hit-test against the full-detail shapes so taps near borders still land.
+    const hit = FEATURES.find((f) => featCountry.get(f) && d3.geoContains(f, ll));
+    if (hit) renderContinent(CONT[featCountry.get(hit).cont]);
+  };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  window.addEventListener("resize", () => { if (screen === "home") draw(); });
+  return { start, face };
+})();
+
 /* ---------- Home ---------- */
 function renderHome() {
+  if (curCont) globe.face(curCont);
   curCont = null;
   show("home");
+  globe.start();
   const list = $("#cont-list");
   list.innerHTML = CONTS.map((c) => {
     const done = doneSections(c), total = c.sections.length;
